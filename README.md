@@ -1,4 +1,4 @@
-# timecard-mini-lite
+# ansible-timecard-mini
 
 Ansible playbook to configure a Raspberry Pi CM4 + [TimeBeat Mini HAT Essential](https://www.timebeat.app) as a stratum-1 NTP/PTP/NTS timeserver. Runs against a freshly-flashed Raspberry Pi OS Lite (64-bit, Bookworm), replacing the full TimeBeat desktop image with a lightweight, reproducible, config-as-code setup.
 
