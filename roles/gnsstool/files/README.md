@@ -72,6 +72,50 @@ TimeBeat may override this on restart — check its GNSS configuration.
 
 Revert to the factory default portable mode.
 
+### `gnsstool elevation`
+
+Show the current minimum elevation mask, and preview how many of the satellites
+currently tracked each mask would exclude. The preview reflects the sky right now —
+run it at different times of day before choosing a value.
+
+Example output (satellite figures from a real snapshot; the current mask value is illustrative):
+
+```
+Elevation mask:  5°  (CFG-NAVSPG-INFIL_MINELEV = 5)
+
+Satellites below the mask are still tracked but not used in the navigation/timing solution.
+
+Currently tracked: 21   used in fix: 20
+
+--- Tracked satellites excluded at each mask ---
+   Mask  Excluded  Remaining
+  --------------------------
+     5°         0         21  <- current
+    10°         3         18
+    15°         3         18
+    20°         6         15
+    25°         7         14
+
+--- Low satellites (below 25°) ---
+  Satellite       Elev    Az   SNR   Used
+  ----------------------------------------
+  GPS/21            6°   20°    29    yes
+  Galileo/08        6°  239°    14    yes
+  GPS/04            9°  292°    36    yes
+  ...
+```
+
+### `gnsstool elevation set <degrees>`
+
+Set the minimum elevation (0–90°). Satellites below it are ignored in the solution.
+
+```
+Elevation mask set to: 15°
+
+Note: change is RAM-only and will be lost on chip reset or power cycle.
+Verify with: gnsstool elevation
+```
+
 ---
 
 ## Timing accuracy and platform mode
@@ -92,6 +136,58 @@ stationary)." Typical PPS accuracy: tens of nanoseconds.
 
 The platform mode is set in RAM and is lost on chip reset. If TimeBeat is
 configured to set the dynamic model itself, its setting will take effect on restart.
+
+---
+
+## Timing accuracy and elevation mask
+
+The elevation mask (CFG-NAVSPG-INFIL_MINELEV) stops satellites close to the horizon
+being used in the solution. Signal strength is not the reason: a low satellite can
+have an excellent SNR and still be a poor timing source, because:
+
+- **Troposphere** — a low signal crosses far more of the lower atmosphere. The delay
+  scales roughly as 1/sin(elevation): ~2.3 m at the zenith, ~10 m at 15°, ~25 m at 5°.
+  The receiver removes most of it with a standard model, but the residual error scales
+  the same way. Range error is time error (1 m ≈ 3.3 ns), so it feeds the PPS directly.
+- **Ionosphere** — also worse at low elevation. The MAX-F10S is dual-band (L1 + L5) and
+  can largely cancel this for satellites tracked on both bands; the troposphere affects
+  both bands equally, so it is the error the mask mainly addresses.
+- **Multipath** — low-angle signals reflect off the ground and nearby buildings far more.
+
+The trade-off is geometry: low satellites spread the sky coverage, which helps the
+solution. 10–15° is the usual range for timing; going much higher starves the receiver.
+
+The mask is set in RAM and is lost on chip reset.
+
+---
+
+## Experimenting one setting at a time
+
+Both settings are RAM-only, so each experiment reverts itself on a chip power cycle.
+Change one thing, let it run, compare.
+
+1. **Baseline** — capture the starting state at a few times of day:
+   ```bash
+   gnsstool platform
+   gnsstool elevation
+   gnsstool satellites > ~/gnss-baseline-$(date +%F-%H%M).txt
+   ```
+   Note TimeBeat's PPS offset/jitter and gnsstrack's position spread over the same period.
+2. **Change one setting**, then confirm it took:
+   ```bash
+   gnsstool platform set stationary && gnsstool platform
+   ```
+3. **Let it run for about a day** — satellite geometry repeats roughly every 12–24 hours,
+   so a short window can mislead.
+4. **Compare** against the baseline, then move to the next setting:
+   ```bash
+   gnsstool elevation set 15 && gnsstool elevation
+   ```
+5. **Revert** a setting by setting it back to the value shown in the baseline
+   (e.g. `gnsstool platform set portable`, `gnsstool elevation set 5`), or power-cycle the chip.
+
+After a `sudo systemctl restart timebeat`, re-run `gnsstool platform` and
+`gnsstool elevation` to check whether TimeBeat reconfigures the chip on startup.
 
 ---
 
