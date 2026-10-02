@@ -1,4 +1,4 @@
-.PHONY: deploy deploy-bootstrap check lint deps clean
+.PHONY: deploy deploy-bootstrap check lint test deps clean
 
 VAULT_TPL := group_vars/timeservers/vault.yml.tpl
 VAULT_YML := group_vars/timeservers/vault.yml
@@ -27,6 +27,10 @@ deps:
 
 lint:
 	ansible-lint playbook.yml
+
+# Unit tests for the on-device Python tools (no hardware needed)
+test:
+	python3 -m unittest discover -s roles/gnsstool/tests
 
 clean:
 	rm -f $(VAULT_YML)

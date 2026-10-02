@@ -8,3 +8,4 @@ original-config/
 .DS_Store
 *.md
 !README.md
+__pycache__/

@@ -23,5 +23,8 @@ jobs:
       - name: Install collections
         run: ansible-galaxy collection install -r requirements.yml
 
+      - name: Run gnsstool unit tests
+        run: python -m unittest discover -s roles/gnsstool/tests
+
       - name: Run ansible-lint
         run: ansible-lint playbook.yml
