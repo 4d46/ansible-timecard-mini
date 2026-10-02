@@ -198,6 +198,33 @@ sudo i2cdetect -y 1
 
 ---
 
+## Manual GNSS Hardware Configuration (u-blox MAX-F10S)
+
+Two receiver settings improve timing for a fixed antenna. Neither is applied by Ansible — set them by hand with `gnsstool` (installed by the `gnsstool` role). It talks to the chip over I2C, so TimeBeat keeps running on the UART throughout.
+
+| Setting | Why |
+| --- | --- |
+| **Dynamic platform model → Stationary** | Tells the receiver the antenna doesn't move, so it stops solving for velocity and converges on a steadier position — which reduces timing noise. |
+| **Minimum elevation mask → 15°** | Ignores satellites near the horizon. Their signals cross far more atmosphere (residual tropospheric delay) and pick up more ground/building reflections (multipath), both of which add timing error even when the signal is strong. |
+
+```bash
+# Check current values (and which satellites a mask would exclude)
+gnsstool platform
+gnsstool elevation
+
+# Apply — one at a time, so the effect of each can be measured
+gnsstool platform set stationary
+gnsstool elevation set 15
+
+# Revert
+gnsstool platform set portable
+gnsstool elevation set <value from baseline>
+```
+
+Changes are written to the chip's **RAM only** — they are lost on a chip reset or power cycle, so reapply with the commands above. See `/opt/gnsstool/README.md` on the device ([source](roles/gnsstool/files/README.md)) for the reasoning behind each setting and a step-by-step experiment workflow.
+
+---
+
 ## Troubleshooting
 
 **TimeBeat not starting** — run in the foreground to see errors directly:

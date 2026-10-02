@@ -9,6 +9,8 @@ Usage:
     gnsstool satellites                Per-satellite signal strength and constellation breakdown
     gnsstool platform                  Current dynamic platform mode and timing notes
     gnsstool platform set <mode>       Set platform mode: stationary | portable
+    gnsstool elevation                 Current elevation mask and the satellites it excludes
+    gnsstool elevation set <degrees>   Set minimum satellite elevation (0-90)
 """
 
 import argparse
@@ -60,7 +62,11 @@ CFG_VALGET = (0x06, 0x8B)   # Get configuration value(s)
 CFG_VALSET = (0x06, 0x8A)   # Set configuration value(s)
 
 # Configuration key IDs (u-blox generation 9+)
-CFG_NAVSPG_DYNMODEL = 0x20110021  # Dynamic platform model (U1)
+CFG_NAVSPG_DYNMODEL       = 0x20110021  # Dynamic platform model (U1)
+CFG_NAVSPG_INFIL_MINELEV  = 0x201100A4  # Minimum elevation for satellites used in navigation, degrees (I1)
+
+# The key ID encodes value size but not signedness, so signed keys are listed explicitly
+SIGNED_KEYS = {CFG_NAVSPG_INFIL_MINELEV}
 
 DYNMODEL_STATIONARY = 2
 DYNMODEL_PORTABLE   = 0
@@ -181,14 +187,21 @@ def _key_value_size(key_id):
     return {1: 1, 2: 1, 3: 2, 4: 4, 5: 8}.get(size_type, 1)
 
 
-def cfg_valget(bus, key_id, layer=0):
-    """
-    Read a single configuration item via CFG-VALGET.
-    layer: 0=RAM (current), 1=BBR, 2=Flash.
-    Returns the value or None on failure.
-    """
-    req = struct.pack('<BBH', 0, layer, 0) + struct.pack('<I', key_id)
-    data = poll_ubx(bus, *CFG_VALGET, payload=req)
+def _value_format(key_id):
+    """Return the struct format for a configuration key's value."""
+    fmt = {1: 'B', 2: '<H', 4: '<I', 8: '<Q'}[_key_value_size(key_id)]
+    return fmt.lower() if key_id in SIGNED_KEYS else fmt
+
+
+def _valset_payload(key_id, value, layers):
+    """Build a CFG-VALSET payload: version(1) layers(1) reserved(2) key(4) value(N)."""
+    return (struct.pack('<BBH', 0, layers, 0)
+            + struct.pack('<I', key_id)
+            + struct.pack(_value_format(key_id), value))
+
+
+def _parse_valget(data, key_id):
+    """Extract key_id's value from a CFG-VALGET response payload, or None if absent."""
     if not data or len(data) < 5:
         return None
     # Response layout: version(1) layer(1) position(2) [key(4) value(N)]...
@@ -200,16 +213,19 @@ def cfg_valget(bus, key_id, layer=0):
         if off + size > len(data):
             break
         if resp_key == key_id:
-            if size == 1:
-                return data[off]
-            elif size == 2:
-                return struct.unpack_from('<H', data, off)[0]
-            elif size == 4:
-                return struct.unpack_from('<I', data, off)[0]
-            elif size == 8:
-                return struct.unpack_from('<Q', data, off)[0]
+            return struct.unpack_from(_value_format(key_id), data, off)[0]
         off += size
     return None
+
+
+def cfg_valget(bus, key_id, layer=0):
+    """
+    Read a single configuration item via CFG-VALGET.
+    layer: 0=RAM (current), 1=BBR, 2=Flash.
+    Returns the value or None on failure.
+    """
+    req = struct.pack('<BBH', 0, layer, 0) + struct.pack('<I', key_id)
+    return _parse_valget(poll_ubx(bus, *CFG_VALGET, payload=req), key_id)
 
 
 def cfg_valset(bus, key_id, value, layers=1):
@@ -218,18 +234,7 @@ def cfg_valset(bus, key_id, value, layers=1):
     layers bitmask: bit0=RAM, bit1=BBR, bit2=Flash. Default 1=RAM only (lost on restart).
     Returns True on ACK, False on NAK, None on timeout.
     """
-    size      = _key_value_size(key_id)
-    key_bytes = struct.pack('<I', key_id)
-    if size == 1:
-        val_bytes = struct.pack('B', value)
-    elif size == 2:
-        val_bytes = struct.pack('<H', value)
-    elif size == 4:
-        val_bytes = struct.pack('<I', value)
-    else:
-        val_bytes = struct.pack('<Q', value)
-
-    req = struct.pack('<BBH', 0, layers, 0) + key_bytes + val_bytes
+    req = _valset_payload(key_id, value, layers)
     _flush(bus)
     _send_ubx(bus, *CFG_VALSET, req)
 
@@ -309,14 +314,8 @@ def cmd_status(_args):
     return 0
 
 
-def cmd_satellites(_args):
-    with smbus2.SMBus(BUS) as bus:
-        payload = poll_ubx(bus, *NAV_SAT)
-
-    if not payload or len(payload) < 8:
-        print("Error: no NAV-SAT response from chip")
-        return 1
-
+def _parse_nav_sat(payload):
+    """Decode a NAV-SAT payload into a list of per-satellite dicts."""
     num_svs = payload[5]
     sats    = []
 
@@ -333,6 +332,18 @@ def cmd_satellites(_args):
         used    = bool(flags & 0x08)
         name    = GNSS_NAMES.get(gnss_id, f'Unknown({gnss_id})')
         sats.append(dict(gnss=name, sv_id=sv_id, cno=cno, elev=elev, azim=azim, used=used))
+    return sats
+
+
+def cmd_satellites(_args):
+    with smbus2.SMBus(BUS) as bus:
+        payload = poll_ubx(bus, *NAV_SAT)
+
+    if not payload or len(payload) < 8:
+        print("Error: no NAV-SAT response from chip")
+        return 1
+
+    sats = _parse_nav_sat(payload)
 
     from collections import defaultdict
     by_gnss = defaultdict(list)
@@ -420,6 +431,78 @@ def cmd_platform_set(args):
     return 0
 
 
+ELEVATION_PREVIEW = (5, 10, 15, 20, 25)
+
+
+def cmd_elevation_status(_args):
+    with smbus2.SMBus(BUS) as bus:
+        min_elev = cfg_valget(bus, CFG_NAVSPG_INFIL_MINELEV)
+        payload  = poll_ubx(bus, *NAV_SAT)
+
+    if min_elev is None:
+        print("Error: no response from chip — check i2cdetect -y 1 shows 0x42")
+        return 1
+
+    print(f"Elevation mask:  {min_elev}°  (CFG-NAVSPG-INFIL_MINELEV = {min_elev})")
+    print()
+    print("Satellites below the mask are still tracked but not used in the navigation/timing solution.")
+
+    if not payload or len(payload) < 8:
+        print("\n(no NAV-SAT response — cannot show satellite impact)")
+        return 0
+
+    tracked = [s for s in _parse_nav_sat(payload)
+               if s['cno'] > 0 and s['gnss'] not in ('SBAS', 'IMES', 'Mixed')]
+    used    = sum(1 for s in tracked if s['used'])
+    print(f"\nCurrently tracked: {len(tracked)}   used in fix: {used}")
+
+    print("\n--- Tracked satellites excluded at each mask ---")
+    print(f"  {'Mask':>5}  {'Excluded':>8}  {'Remaining':>9}")
+    print(f"  {'-' * 26}")
+    for deg in ELEVATION_PREVIEW:
+        below  = sum(1 for s in tracked if s['elev'] < deg)
+        marker = '  <- current' if deg == min_elev else ''
+        print(f"  {deg:>4}°  {below:>8}  {len(tracked) - below:>9}{marker}")
+
+    low = sorted((s for s in tracked if s['elev'] < max(ELEVATION_PREVIEW)), key=lambda s: s['elev'])
+    if low:
+        print(f"\n--- Low satellites (below {max(ELEVATION_PREVIEW)}°) ---")
+        print(f"  {'Satellite':<14} {'Elev':>5}  {'Az':>4}  {'SNR':>4}  {'Used':>5}")
+        print(f"  {'-' * 40}")
+        for s in low:
+            label = f"{s['gnss']}/{s['sv_id']:02d}"
+            print(f"  {label:<14} {s['elev']:>4}°  {s['azim']:>3}°  {s['cno']:>4}  {'yes' if s['used'] else '-':>5}")
+    return 0
+
+
+def _elevation_degrees(text):
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"'{text}' is not a whole number of degrees")
+    if not 0 <= value <= 90:
+        raise argparse.ArgumentTypeError('must be between 0 and 90')
+    return value
+
+
+def cmd_elevation_set(args):
+    with smbus2.SMBus(BUS) as bus:
+        result = cfg_valset(bus, CFG_NAVSPG_INFIL_MINELEV, args.degrees, layers=1)   # RAM only
+
+    if result is True:
+        print(f"Elevation mask set to: {args.degrees}°")
+        print()
+        print("Note: change is RAM-only and will be lost on chip reset or power cycle.")
+        print("Verify with: gnsstool elevation")
+    elif result is False:
+        print("Error: chip rejected the configuration (NAK)")
+        return 1
+    else:
+        print("Error: no ACK from chip — change may not have taken effect")
+        return 1
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -436,6 +519,8 @@ def main():
             "  gnsstool platform\n"
             "  gnsstool platform set stationary\n"
             "  gnsstool platform set portable\n"
+            "  gnsstool elevation\n"
+            "  gnsstool elevation set 15\n"
         ),
     )
     sub = parser.add_subparsers(dest='command', metavar='command')
@@ -453,6 +538,15 @@ def main():
     set_p.add_argument('mode', choices=['stationary', 'portable'],
                        help='stationary: timing-optimised | portable: factory default')
 
+    elevation_p   = sub.add_parser('elevation', help='Minimum satellite elevation mask (affects timing accuracy)')
+    elevation_sub = elevation_p.add_subparsers(dest='elevation_command', metavar='subcommand')
+
+    elevation_sub.add_parser('status', help='Show current elevation mask and which satellites it excludes')
+
+    elev_set_p = elevation_sub.add_parser('set', help='Set elevation mask in degrees (RAM only, lost on restart)')
+    elev_set_p.add_argument('degrees', type=_elevation_degrees,
+                            help='minimum elevation, 0-90 (e.g. 15)')
+
     args = parser.parse_args()
 
     try:
@@ -466,6 +560,12 @@ def main():
                 sys.exit(cmd_platform_status(args))
             elif platform_cmd == 'set':
                 sys.exit(cmd_platform_set(args))
+        elif args.command == 'elevation':
+            elevation_cmd = getattr(args, 'elevation_command', None)
+            if elevation_cmd is None or elevation_cmd == 'status':
+                sys.exit(cmd_elevation_status(args))
+            elif elevation_cmd == 'set':
+                sys.exit(cmd_elevation_set(args))
     except PermissionError:
         print("Error: cannot open I2C bus — check you are in the i2c group (run: id | grep i2c)")
         sys.exit(1)
