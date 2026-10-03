@@ -28,6 +28,8 @@ import gnsstool  # noqa: E402
 
 PARSER = gnsstool.build_parser()
 
+TOP_LEVEL = ['completion', 'elevation', 'help', 'platform', 'satellites', 'status', 'version']
+
 
 def _write_script(text):
     f = tempfile.NamedTemporaryFile('w', suffix='.sh', delete=False)
@@ -60,7 +62,7 @@ class BashCompletionTest(unittest.TestCase):
 
     def test_top_level_commands(self):
         self.assertEqual(self.complete("gnsstool ''"),
-                         ['completion', 'elevation', 'platform', 'satellites', 'status'])
+                         TOP_LEVEL)
 
     def test_partial_word_is_completed(self):
         self.assertEqual(self.complete('gnsstool el'), ['elevation'])
@@ -70,6 +72,12 @@ class BashCompletionTest(unittest.TestCase):
 
     def test_elevation_set_offers_suggestions(self):
         self.assertEqual(self.complete("gnsstool elevation set 1"), ['10', '15'])
+
+    def test_help_offers_commands(self):
+        self.assertEqual(self.complete("gnsstool help ''"), TOP_LEVEL)
+
+    def test_top_level_options_include_version(self):
+        self.assertEqual(self.complete('gnsstool --'), ['--help', '--version'])
 
     def test_completion_offers_shells(self):
         self.assertEqual(self.complete("gnsstool completion ''"), ['bash', 'zsh'])
@@ -104,7 +112,7 @@ class ZshCompletionTest(unittest.TestCase):
 
     def test_top_level_commands_with_descriptions(self):
         entries = dict(e.split(':', 1) for e in self.complete(''))
-        self.assertEqual(sorted(entries), ['completion', 'elevation', 'platform', 'satellites', 'status'])
+        self.assertEqual(sorted(entries), TOP_LEVEL)
         self.assertIn('elevation mask', entries['elevation'])
 
     def test_platform_set_offers_modes(self):

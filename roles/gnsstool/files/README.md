@@ -3,7 +3,8 @@
 Query and configure the u-blox GNSS chip via I2C, without interfering with
 TimeBeat which owns the UART port.
 
-Installed and managed by Ansible to `/opt/gnsstool/`.
+Installed and managed by Ansible to `/opt/gnsstool/`. Version history is in
+[CHANGELOG.md](CHANGELOG.md) (also deployed to `/opt/gnsstool/`).
 
 ---
 
@@ -24,16 +25,18 @@ UTC time:    2026-05-14 14:23:01  ±18ns
 
 ### `gnsstool satellites`
 
-Constellation summary and per-satellite signal strength (SNR, dB-Hz).
+Constellation summary and per-satellite signal strength (SNR, dB-Hz). The summary
+counts only satellites whose signal is being received (**Tracked**), and how many of
+those are in the fix (**Used**), so it always agrees with the list below it.
 
 ```
 --- Constellation Summary ---
-  Constellation  SVs  Avg SNR  Strong  Fair  Weak
-  ------------------------------------------------
-  BeiDou           4     38.0       3     1     0
-  GPS              8     42.1       6     2     0
-  GLONASS          3     38.4       2     1     0
-  Galileo          3     40.2       3     0     0
+  Constellation  Tracked  Used  Avg SNR  Strong  Fair  Weak
+  ---------------------------------------------------------
+  BeiDou             4     3     38.0       3     1     0
+  GPS                8     7     42.1       6     2     0
+  GLONASS            3     2     38.4       2     1     0
+  Galileo            3     2     40.2       3     0     0
 
 --- Satellites (18 tracked) ---
   Satellite       Elev    Az   SNR   Used
@@ -115,6 +118,27 @@ Elevation mask set to: 15°
 Note: change is RAM-only and will be lost on chip reset or power cycle.
 Verify with: gnsstool elevation
 ```
+
+### `gnsstool help [command]`
+
+Show help for the tool, or for one command (same as `gnsstool <command> --help`).
+
+```
+gnsstool help elevation
+```
+
+### `gnsstool version`
+
+Show the tool version and the repository commit it was deployed from. Ansible
+writes the commit to `/opt/gnsstool/BUILD` on each deploy; `-dirty` means the deploy
+was made with uncommitted changes. `gnsstool --version` prints the same.
+
+```
+gnsstool 1.1.0 (commit a1b2c3d, 2026-10-03)
+```
+
+Useful when comparing experiments over time: it records exactly which build was on
+the box.
 
 ---
 
@@ -238,4 +262,8 @@ sudo rm -f /usr/local/share/bash-completion/completions/gnsstool \
            /usr/local/share/zsh/site-functions/_gnsstool
 ```
 
-Or disable in Ansible (`gnsstool_enabled: false` in vars.yml) and run `make deploy`.
+These commands are the only way to remove it. Setting `gnsstool_enabled: false` in
+vars.yml only stops Ansible *managing* gnsstool — the role is skipped, so nothing is
+removed and the installed copy stays exactly as it was. Set it to `false` first if you
+don't want the next `make deploy` to reinstall it. The `admin` user's membership of the
+`i2c` group is shared with `gnss_survey`, so it is left in place.
