@@ -194,6 +194,9 @@ gnsstrack status
 
 # I2C GNSS module (expect address 0x42 on bus 1)
 sudo i2cdetect -y 1
+
+# gnsstool build on the device (version and repository commit it was deployed from)
+gnsstool version
 ```
 
 ---

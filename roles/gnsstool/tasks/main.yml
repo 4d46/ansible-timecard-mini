@@ -15,10 +15,41 @@
     group: root
     mode: "0755"
 
-- name: Deploy README.md
+- name: Deploy README.md and CHANGELOG.md
   ansible.builtin.copy:
-    src: README.md
-    dest: /opt/gnsstool/README.md
+    src: "{{ item }}"
+    dest: "/opt/gnsstool/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - README.md
+    - CHANGELOG.md
+
+# Build info for `gnsstool version`: the commit this repo was deployed from, and that
+# commit's date (not the deploy date, so re-runs don't report a change every day).
+# `--dirty` flags a deploy made with uncommitted changes to tracked files.
+- name: Get repository commit for gnsstool build info
+  ansible.builtin.command: "{{ item }}"
+  args:
+    chdir: "{{ playbook_dir }}"
+  loop:
+    - git describe --always --dirty --abbrev=7
+    - git log -1 --format=%cs
+  register: gnsstool_git_info
+  delegate_to: localhost
+  become: false
+  run_once: true
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Write gnsstool build info
+  ansible.builtin.copy:
+    content: >-
+      commit {{ gnsstool_git_info.results[0].stdout | default('unknown', true) }},
+      {{ gnsstool_git_info.results[1].stdout | default('unknown date', true) }}
+    dest: /opt/gnsstool/BUILD
     owner: root
     group: root
     mode: "0644"

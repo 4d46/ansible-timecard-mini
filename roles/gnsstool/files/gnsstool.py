@@ -12,14 +12,22 @@ Usage:
     gnsstool elevation                 Current elevation mask and the satellites it excludes
     gnsstool elevation set <degrees>   Set minimum satellite elevation (0-90)
     gnsstool completion <shell>        Print shell completion script: bash | zsh
+    gnsstool help [command]            Show help for gnsstool or one command
+    gnsstool version                   Show version and the repository commit it was deployed from
 """
 
 import argparse
 import struct
 import sys
 import time
+from pathlib import Path
 
 import smbus2
+
+__version__ = '1.1.0'   # bump per CHANGELOG.md when the CLI or its behaviour changes
+
+# Written by Ansible at deploy time: the repository commit this copy came from
+BUILD_INFO_PATH = Path(__file__).with_name('BUILD')
 
 BUS  = 1
 ADDR = 0x42
@@ -42,6 +50,9 @@ FIX_TYPES = {
     4: 'GNSS + dead reckoning',
     5: 'Time only (fixed position mode)',
 }
+
+# Not navigation constellations — excluded from satellite listings and counts
+EXCLUDED_GNSS = ('SBAS', 'IMES', 'Mixed')
 
 DYNMODEL_NAMES = {
     0:  'Portable (default)',
@@ -336,6 +347,33 @@ def _parse_nav_sat(payload):
     return sats
 
 
+def _constellation_summary(sats):
+    """
+    Per-constellation counts over tracked satellites (signal received, SNR > 0).
+    Satellites the chip knows about but isn't receiving are not counted, so every
+    column describes the same set. Returns rows sorted by constellation name.
+    """
+    from collections import defaultdict
+    by_gnss = defaultdict(list)
+    for s in sats:
+        if s['cno'] > 0 and s['gnss'] not in EXCLUDED_GNSS:
+            by_gnss[s['gnss']].append(s)
+
+    rows = []
+    for name in sorted(by_gnss):
+        snrs = [s['cno'] for s in by_gnss[name]]
+        rows.append(dict(
+            name=name,
+            tracked=len(snrs),
+            used=sum(1 for s in by_gnss[name] if s['used']),
+            avg_snr=sum(snrs) / len(snrs),
+            strong=sum(1 for c in snrs if c >= 35),
+            fair=sum(1 for c in snrs if 20 <= c < 35),
+            weak=sum(1 for c in snrs if c < 20),
+        ))
+    return rows
+
+
 def cmd_satellites(_args):
     with smbus2.SMBus(BUS) as bus:
         payload = poll_ubx(bus, *NAV_SAT)
@@ -346,28 +384,15 @@ def cmd_satellites(_args):
 
     sats = _parse_nav_sat(payload)
 
-    from collections import defaultdict
-    by_gnss = defaultdict(list)
-    for s in sats:
-        if s['gnss'] not in ('SBAS', 'IMES', 'Mixed'):
-            by_gnss[s['gnss']].append(s)
-
     print("--- Constellation Summary ---")
-    print(f"  {'Constellation':<12} {'SVs':>4}  {'Avg SNR':>7}  {'Strong':>6}  {'Fair':>5}  {'Weak':>5}")
-    print(f"  {'-' * 48}")
-    for name in sorted(by_gnss):
-        group = by_gnss[name]
-        snrs  = [s['cno'] for s in group if s['cno'] > 0]
-        if not snrs:
-            continue
-        avg    = sum(snrs) / len(snrs)
-        strong = sum(1 for s in snrs if s >= 35)
-        fair   = sum(1 for s in snrs if 20 <= s < 35)
-        weak   = sum(1 for s in snrs if s < 20)
-        print(f"  {name:<12} {len(group):>4}  {avg:>7.1f}  {strong:>6}  {fair:>5}  {weak:>5}")
+    print(f"  {'Constellation':<12} {'Tracked':>7}  {'Used':>4}  {'Avg SNR':>7}  {'Strong':>6}  {'Fair':>5}  {'Weak':>5}")
+    print(f"  {'-' * 57}")
+    for row in _constellation_summary(sats):
+        print(f"  {row['name']:<12} {row['tracked']:>7}  {row['used']:>4}  {row['avg_snr']:>7.1f}"
+              f"  {row['strong']:>6}  {row['fair']:>5}  {row['weak']:>5}")
 
     tracked = sorted(
-        [s for s in sats if s['cno'] > 0 and s['gnss'] not in ('SBAS', 'IMES', 'Mixed')],
+        [s for s in sats if s['cno'] > 0 and s['gnss'] not in EXCLUDED_GNSS],
         key=lambda s: -s['cno'],
     )
 
@@ -454,7 +479,7 @@ def cmd_elevation_status(_args):
         return 0
 
     tracked = [s for s in _parse_nav_sat(payload)
-               if s['cno'] > 0 and s['gnss'] not in ('SBAS', 'IMES', 'Mixed')]
+               if s['cno'] > 0 and s['gnss'] not in EXCLUDED_GNSS]
     used    = sum(1 for s in tracked if s['used'])
     print(f"\nCurrently tracked: {len(tracked)}   used in fix: {used}")
 
@@ -505,6 +530,26 @@ def cmd_elevation_set(args):
     return 0
 
 
+def version_string(build_path=BUILD_INFO_PATH):
+    try:
+        build = build_path.read_text().strip()
+    except OSError:
+        build = ''
+    return f"gnsstool {__version__} ({build or 'build info unavailable'})"
+
+
+def cmd_version(_args):
+    print(version_string())
+    return 0
+
+
+def cmd_help(parser, args):
+    if args.topic:
+        parser.parse_args([args.topic, '--help'])   # argparse prints the help and exits 0
+    parser.print_help()
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Shell completion
 #
@@ -534,8 +579,9 @@ def _completion_tree(parser, prefix=()):
 
 
 def completion_bash(parser):
-    prog  = parser.prog
-    cases = []
+    prog        = parser.prog
+    top_options = ' '.join(o for a in parser._actions for o in a.option_strings)
+    cases       = []
     for path, candidates in _completion_tree(parser):
         words = ' '.join(w for w, _ in candidates)
         cases.append(f'            "{" ".join(path)}") words="{words}" ;;')
@@ -552,7 +598,7 @@ def completion_bash(parser):
         '        esac',
         '    done',
         '    if [[ "$cur" == -* ]]; then',
-        '        words="-h --help"',
+        f'        if [[ -z "$cmd_path" ]]; then words="{top_options}"; else words="-h --help"; fi',
         '    else',
         '        case "$cmd_path" in',
         *cases,
@@ -618,8 +664,11 @@ def build_parser():
             "  gnsstool elevation\n"
             "  gnsstool elevation set 15\n"
             "  gnsstool completion bash\n"
+            "  gnsstool help elevation\n"
+            "  gnsstool version\n"
         ),
     )
+    parser.add_argument('--version', action='version', version=version_string())
     sub = parser.add_subparsers(dest='command', metavar='command')
     sub.required = True
 
@@ -649,6 +698,13 @@ def build_parser():
     completion_p.add_argument('shell', choices=sorted(COMPLETION_GENERATORS),
                               help='shell to generate completion for')
 
+    sub.add_parser('version', help='Show version and the repository commit it was deployed from')
+
+    # Defined last so its choices cover every other command
+    help_p = sub.add_parser('help', help='Show help for gnsstool or one command')
+    help_p.add_argument('topic', nargs='?', choices=list(sub.choices),
+                        metavar='command', help='command to show help for')
+
     return parser
 
 
@@ -659,6 +715,10 @@ def main():
     if args.command == 'completion':
         print(COMPLETION_GENERATORS[args.shell](parser))
         sys.exit(0)
+    if args.command == 'help':
+        sys.exit(cmd_help(parser, args))
+    if args.command == 'version':
+        sys.exit(cmd_version(args))
 
     try:
         if args.command == 'status':
