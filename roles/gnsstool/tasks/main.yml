@@ -44,3 +44,41 @@
     content: |
       #!/bin/bash
       exec /opt/gnsstool/venv/bin/python3 /opt/gnsstool/gnsstool.py "$@"
+
+- name: Ensure bash-completion is installed
+  ansible.builtin.apt:
+    name: bash-completion
+    state: present
+  when: "'bash' in gnsstool_shell_completions"
+
+- name: Create shell completion directories
+  ansible.builtin.file:
+    path: "{{ gnsstool_completion_paths[item] | dirname }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: "{{ gnsstool_shell_completions }}"
+
+# The tool prints its own completion scripts from its argparse definitions, so
+# they always match the installed version. In check mode on a host where
+# gnsstool isn't installed yet this can't run, so the install step is skipped.
+- name: Generate gnsstool shell completion scripts
+  ansible.builtin.command: /usr/local/bin/gnsstool completion {{ item }}
+  loop: "{{ gnsstool_shell_completions }}"
+  register: gnsstool_completion_scripts
+  changed_when: false
+  failed_when: gnsstool_completion_scripts.rc != 0 and not ansible_check_mode
+  check_mode: false
+
+- name: Install gnsstool shell completion scripts
+  ansible.builtin.copy:
+    content: "{{ item.stdout }}\n"
+    dest: "{{ gnsstool_completion_paths[item.item] }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ gnsstool_completion_scripts.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: item.rc == 0

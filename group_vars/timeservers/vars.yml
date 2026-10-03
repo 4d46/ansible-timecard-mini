@@ -61,6 +61,9 @@ gnss_survey_enabled: true
 gnsstool_enabled: true
 gnsstrack_enabled: true
 
+# --- gnsstool ---
+gnsstool_shell_completions: [bash, zsh]  # completion scripts to install; remove a shell to skip it
+
 # --- gnsstrack ---
 gnsstrack_log_dir: /var/log/gnsstrack
 gnsstrack_log_simulation_dir: /tmp/gnsstrack
