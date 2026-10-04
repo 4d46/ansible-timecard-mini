@@ -1,6 +1,10 @@
 ---
+# Ansible collections, pinned to exact versions. Galaxy has no hash pinning,
+# so an exact version is the strongest guarantee available; Renovate proposes
+# updates. community.general: ufw, nmcli, timezone, locale_gen.
+# ansible.posix: authorized_key.
 collections:
-  - name: community.general
-    version: ">=9.0.0"
   - name: ansible.posix
-    version: ">=1.5.0"
+    version: 2.2.2
+  - name: community.general
+    version: 12.6.5
