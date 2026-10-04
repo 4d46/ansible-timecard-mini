@@ -1,0 +1,8 @@
+# Direct Python dependencies. Edit this file, not requirements.txt.
+#
+# requirements.txt is the lock file generated from it: every package, including
+# indirect ones, pinned to an exact version with SHA-256 hashes. Regenerate it
+# with 'make lock' after editing this file; Dependabot updates both.
+ansible       # Ansible community package (ansible-core + bundled collections)
+ansible-lint  # 'make lint' and CI
+passlib       # password_hash filter for the admin user's password
