@@ -1,18 +1,4 @@
 ---
-- name: Get latest gnsstrack release from GitHub API
-  ansible.builtin.uri:
-    url: https://api.github.com/repos/4d46/gnsstrack/releases/latest
-    return_content: true
-  register: gnsstrack_release
-  delegate_to: localhost
-  become: false
-  run_once: true
-  check_mode: false
-
-- name: Set gnsstrack_latest_tag fact
-  ansible.builtin.set_fact:
-    gnsstrack_latest_tag: "{{ gnsstrack_release.json.tag_name }}"
-
 - name: Check installed gnsstrack version
   ansible.builtin.command: gnsstrack version
   register: gnsstrack_installed_version
@@ -25,15 +11,16 @@
     path: /tmp/gnsstrack-extract
     state: directory
     mode: "0755"
-  when: gnsstrack_installed_version.rc != 0 or gnsstrack_latest_tag not in gnsstrack_installed_version.stdout
+  when: gnsstrack_installed_version.rc != 0 or gnsstrack_version not in gnsstrack_installed_version.stdout
   check_mode: false
 
 - name: Download gnsstrack release tarball
   ansible.builtin.get_url:
-    url: "https://github.com/4d46/gnsstrack/releases/download/{{ gnsstrack_latest_tag }}/gnsstrack-linux-arm64.tar.gz"
+    url: "https://github.com/4d46/gnsstrack/releases/download/{{ gnsstrack_version }}/gnsstrack-linux-arm64.tar.gz"
     dest: /tmp/gnsstrack.tar.gz
     mode: "0644"
-  when: gnsstrack_installed_version.rc != 0 or gnsstrack_latest_tag not in gnsstrack_installed_version.stdout
+    checksum: "{{ gnsstrack_tarball_checksum }}"
+  when: gnsstrack_installed_version.rc != 0 or gnsstrack_version not in gnsstrack_installed_version.stdout
   check_mode: false
 
 - name: Extract gnsstrack tarball
@@ -41,7 +28,7 @@
     src: /tmp/gnsstrack.tar.gz
     dest: /tmp/gnsstrack-extract/
     remote_src: true
-  when: gnsstrack_installed_version.rc != 0 or gnsstrack_latest_tag not in gnsstrack_installed_version.stdout
+  when: gnsstrack_installed_version.rc != 0 or gnsstrack_version not in gnsstrack_installed_version.stdout
   check_mode: false
 
 - name: Install gnsstrack binary
@@ -53,7 +40,7 @@
     mode: "0755"
     remote_src: true
   when:
-    - gnsstrack_installed_version.rc != 0 or gnsstrack_latest_tag not in gnsstrack_installed_version.stdout
+    - gnsstrack_installed_version.rc != 0 or gnsstrack_version not in gnsstrack_installed_version.stdout
     - not ansible_check_mode
   notify: Restart gnsstrack
 
@@ -66,7 +53,7 @@
     mode: "0644"
     remote_src: true
   when:
-    - gnsstrack_installed_version.rc != 0 or gnsstrack_latest_tag not in gnsstrack_installed_version.stdout
+    - gnsstrack_installed_version.rc != 0 or gnsstrack_version not in gnsstrack_installed_version.stdout
     - not ansible_check_mode
   notify:
     - Reload systemd
@@ -76,7 +63,7 @@
   ansible.builtin.file:
     path: /tmp/gnsstrack-extract
     state: absent
-  when: gnsstrack_installed_version.rc != 0 or gnsstrack_latest_tag not in gnsstrack_installed_version.stdout
+  when: gnsstrack_installed_version.rc != 0 or gnsstrack_version not in gnsstrack_installed_version.stdout
 
 - name: Create gnsstrack config directory
   ansible.builtin.file:
