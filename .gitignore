@@ -3,6 +3,8 @@ group_vars/timeservers/vault.yml
 .vault_pass
 .ansible_cache/
 original-config/
+# Local reference material (vendor configs, other projects' sources): never publish.
+reference/
 *.retry
 *.pdf
 .DS_Store
