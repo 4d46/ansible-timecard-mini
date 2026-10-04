@@ -24,8 +24,10 @@ jobs:
           # Same interpreter as local runs: .tool-versions is the one source.
           python-version-file: .tool-versions
 
+      # requirements.txt is a hash-pinned lock: pip refuses any file whose
+      # SHA-256 doesn't match, including indirect dependencies.
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install --require-hashes -r requirements.txt
 
       - name: Install collections
         run: ansible-galaxy collection install -r requirements.yml
