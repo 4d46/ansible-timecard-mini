@@ -65,6 +65,12 @@ gnsstrack_enabled: true
 gnsstool_shell_completions: [bash, zsh]  # completion scripts to install; remove a shell to skip it
 
 # --- gnsstrack ---
+# Pinned release + SHA-256 of its tarball, like TimeBeat: never "latest", and
+# the download is verified. To upgrade, update both together; the checksum is
+# the asset's "digest" from the GitHub API:
+#   gh api repos/4d46/gnsstrack/releases/tags/<tag> --jq '.assets[].digest'
+gnsstrack_version: "v1.1.2"
+gnsstrack_tarball_checksum: "sha256:d0259267620f75bceca4ea60d7859a2fbf99133161df1a9c0ed90e670e26a8b7"
 gnsstrack_log_dir: /var/log/gnsstrack
 gnsstrack_log_simulation_dir: /tmp/gnsstrack
 gnsstrack_log_max_size_mb: 50
